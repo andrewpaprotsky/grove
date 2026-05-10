@@ -72,6 +72,15 @@ func DoNotRequeue() ReconcileStepResult {
 	}
 }
 
+// Requeue returns a ReconcileStepResult that immediately requeues the reconciliation.
+func Requeue(description string) ReconcileStepResult {
+	return ReconcileStepResult{
+		continueReconcile: false,
+		result:            ctrl.Result{Requeue: true},
+		description:       description,
+	}
+}
+
 // RecordErrorAndDoNotRequeue returns a ReconcileStepResult that records the error and does not requeue the reconciliation.
 func RecordErrorAndDoNotRequeue(description string, errs ...error) ReconcileStepResult {
 	return ReconcileStepResult{

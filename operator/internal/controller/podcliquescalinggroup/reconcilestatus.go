@@ -211,6 +211,9 @@ func computeMinAvailableBreachedReplicas(logger logr.Logger, pclqsPerPCSGReplica
 	var breachedReplicas int
 	for pcsgReplicaIndex, pclqs := range pclqsPerPCSGReplica {
 		isMinAvailableBreached := lo.Reduce(pclqs, func(agg bool, pclq grovecorev1alpha1.PodClique, _ int) bool {
+			if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+				return agg
+			}
 			return agg || k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
 		}, false)
 		if isMinAvailableBreached {

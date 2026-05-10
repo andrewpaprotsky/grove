@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -38,6 +37,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -130,6 +130,10 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
+	existingPCLQByName, err := r.getExistingPCLQByName(ctx, pcs.Namespace, existingPCLQFQNs)
+	if err != nil {
+		return err
+	}
 
 	for pcsReplica := range pcs.Spec.Replicas {
 		for _, expectedPCLQName := range expectedPCLQNames {
@@ -137,7 +141,11 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplica)}, expectedPCLQName),
 				Namespace: pcs.Namespace,
 			}
-			pclqExists := slices.Contains(existingPCLQFQNs, pclqObjectKey.Name)
+			existingPCLQ, pclqExists := existingPCLQByName[pclqObjectKey.Name]
+			if pclqExists && k8sutils.IsResourceTerminating(existingPCLQ.ObjectMeta) {
+				logger.Info("Skipping terminating PodClique during owner sync", "pclqObjectKey", pclqObjectKey)
+				continue
+			}
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -155,6 +163,25 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 		)
 	}
 	return nil
+}
+
+func (r _resource) getExistingPCLQByName(ctx context.Context, namespace string, existingPCLQFQNs []string) (map[string]grovecorev1alpha1.PodClique, error) {
+	existingPCLQByName := make(map[string]grovecorev1alpha1.PodClique, len(existingPCLQFQNs))
+	for _, pclqFQN := range existingPCLQFQNs {
+		pclq := &grovecorev1alpha1.PodClique{}
+		if err := r.client.Get(ctx, client.ObjectKey{Name: pclqFQN, Namespace: namespace}, pclq); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return nil, groveerr.WrapError(err,
+				errSyncPodClique,
+				component.OperationSync,
+				fmt.Sprintf("Error getting existing PodClique: %s/%s", namespace, pclqFQN),
+			)
+		}
+		existingPCLQByName[pclqFQN] = *pclq
+	}
+	return existingPCLQByName, nil
 }
 
 // triggerDeletionOfPodCliques executes deletion tasks for PodCliques.

@@ -19,14 +19,18 @@ package podclique
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -40,6 +44,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 	dLog := logger.WithValues("operation", "delete")
 	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodClique]{
 		r.clearPodCliqueExpectations,
+		r.emitForegroundDeletionBlockedEvent,
 		r.removeFinalizer,
 	}
 	for _, fn := range deleteStepFns {
@@ -60,6 +65,32 @@ func (r *Reconciler) clearPodCliqueExpectations(_ context.Context, logger logr.L
 	}
 	if err := r.expectationsStore.DeleteExpectations(logger, key); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error clearing expectations", err)
+	}
+	return ctrlcommon.ContinueReconcile()
+}
+
+func (r *Reconciler) emitForegroundDeletionBlockedEvent(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	if r.eventRecorder == nil {
+		return ctrlcommon.ContinueReconcile()
+	}
+	blockers := make([]string, 0)
+	for _, kind := range []component.Kind{component.KindPod, component.KindResourceClaim} {
+		operator, err := r.operatorRegistry.GetOperator(kind)
+		if err != nil {
+			logger.Error(err, "failed to get operator while checking foreground deletion blockers", "kind", kind)
+			continue
+		}
+		names, err := operator.GetExistingResourceNames(ctx, logger, pclq.ObjectMeta)
+		if err != nil {
+			logger.Error(err, "failed to list owned resources while checking foreground deletion blockers", "kind", kind)
+			continue
+		}
+		for _, name := range names {
+			blockers = append(blockers, fmt.Sprintf("%s/%s", kind, name))
+		}
+	}
+	if len(blockers) > 0 {
+		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonPodCliqueForegroundDeletionBlocked, "Foreground deletion of PodClique %s is waiting on owned resources: %s", pclq.Name, strings.Join(blockers, ", "))
 	}
 	return ctrlcommon.ContinueReconcile()
 }

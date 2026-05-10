@@ -648,6 +648,68 @@ spec:
                               required:
                               - maxReplicas
                               type: object
+                            disruption:
+                              description: Disruption configures opt-in PodClique
+                                replacement on matching Pod disruption signals.
+                              properties:
+                                rules:
+                                  description: Rules contains the single supported
+                                    replacement rule.
+                                  items:
+                                    description: PodCliqueDisruptionRule defines one
+                                      Pod condition trigger and action.
+                                    properties:
+                                      action:
+                                        description: Action is the replacement action
+                                          to run when the rule matches.
+                                        enum:
+                                        - Recreate
+                                        type: string
+                                      onPodConditions:
+                                        description: OnPodConditions matches Kubernetes
+                                          Pod conditions.
+                                        items:
+                                          description: PodConditionPattern matches
+                                            a Kubernetes Pod condition.
+                                          properties:
+                                            reason:
+                                              description: Reason is the Pod condition
+                                                reason.
+                                              enum:
+                                              - DeletionByTaintManager
+                                              type: string
+                                            status:
+                                              default: "True"
+                                              description: Status is the Pod condition
+                                                status. Defaults to True.
+                                              enum:
+                                              - "True"
+                                              type: string
+                                            type:
+                                              description: Type is the Pod condition
+                                                type.
+                                              enum:
+                                              - DisruptionTarget
+                                              type: string
+                                          required:
+                                          - reason
+                                          - type
+                                          type: object
+                                        maxItems: 1
+                                        minItems: 1
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - action
+                                    - onPodConditions
+                                    type: object
+                                  maxItems: 1
+                                  minItems: 1
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                              required:
+                              - rules
+                              type: object
                             minAvailable:
                               description: |-
                                 MinAvailable serves two purposes:

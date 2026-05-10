@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strconv"
 	"time"
 
@@ -37,6 +36,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -200,10 +200,16 @@ func computePCSGReplicasToDelete(existingReplicas, expectedReplicas int) []strin
 // createExpectedPCLQs creates any missing PodCliques needed to satisfy the desired PCSG replica configuration
 func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) error {
 	var tasks []utils.Task
-	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
+	existingPCLQs := lo.SliceToMap(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) { return pclq.Name, pclq })
 	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
 		for _, pclqFQN := range expectedPCLQNames {
-			if slices.Contains(existingPCLQFQNs, pclqFQN) {
+			if existingPCLQ, ok := existingPCLQs[pclqFQN]; ok {
+				tasks = append(tasks, utils.Task{
+					Name: "SyncPodCliqueDisruptionPolicy-" + pclqFQN,
+					Fn: func(ctx context.Context) error {
+						return r.syncPCLQDisruptionPolicy(ctx, logger, sc.pcs, existingPCLQ.DeepCopy())
+					},
+				})
 				continue
 			}
 			pclqObjectKey := client.ObjectKey{
@@ -233,14 +239,18 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 // This is used for the OnDelete update strategy where changes are applied in place rather than through recreation.
 func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) error {
 	var tasks []utils.Task
-	existingPCLQFQNs := lo.Map(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
+	existingPCLQs := lo.SliceToMap(sc.existingPCLQs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) { return pclq.Name, pclq })
 	for pcsgReplicaIndex, expectedPCLQNames := range sc.expectedPCLQFQNsPerPCSGReplica {
 		for _, pclqFQN := range expectedPCLQNames {
 			pclqObjectKey := client.ObjectKey{
 				Name:      pclqFQN,
 				Namespace: sc.pcsg.Namespace,
 			}
-			pclqExists := slices.Contains(existingPCLQFQNs, pclqFQN)
+			existingPCLQ, pclqExists := existingPCLQs[pclqFQN]
+			if pclqExists && k8sutils.IsResourceTerminating(existingPCLQ.ObjectMeta) {
+				logger.Info("Skipping terminating PodClique during PodCliqueScalingGroup sync", "pclqObjectKey", pclqObjectKey)
+				continue
+			}
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -257,6 +267,24 @@ func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) erro
 			fmt.Sprintf("Error CreateOrUpdate of PodCliques for PodCliqueScalingGroup: %v, run summary: %s", client.ObjectKeyFromObject(sc.pcsg), runResult.GetSummary()),
 		)
 	}
+	return nil
+}
+
+func (r _resource) syncPCLQDisruptionPolicy(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
+	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	if err != nil {
+		return err
+	}
+	template := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+	if template == nil || k8sutils.IsResourceTerminating(pclq.ObjectMeta) || apiequality.Semantic.DeepEqual(pclq.Spec.Disruption, template.Spec.Disruption) {
+		return nil
+	}
+	original := pclq.DeepCopy()
+	pclq.Spec.Disruption = template.Spec.Disruption.DeepCopy()
+	if err := r.client.Patch(ctx, pclq, client.MergeFrom(original)); err != nil {
+		return groveerr.WrapError(err, errCodeCreateOrUpdatePodCliques, component.OperationSync, fmt.Sprintf("Error syncing PodClique disruption policy for PodClique: %v", client.ObjectKeyFromObject(pclq)))
+	}
+	logger.Info("Synced PodClique disruption policy", "pclqObjectKey", client.ObjectKeyFromObject(pclq))
 	return nil
 }
 

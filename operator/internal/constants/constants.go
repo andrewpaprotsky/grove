@@ -59,6 +59,10 @@ const (
 	ReasonPodCliqueDeleteSuccessful = "PodCliqueDeleteSuccessful"
 	// ReasonPodCliqueDeleteFailed is an event reason which represents that the deletion of a PodClique failed.
 	ReasonPodCliqueDeleteFailed = "PodCliqueDeleteFailed"
+	// ReasonPodCliqueDisruptionAccepted is an event reason emitted when a PodClique disruption policy triggers replacement.
+	ReasonPodCliqueDisruptionAccepted = "PodCliqueDisruptionAccepted"
+	// ReasonPodCliqueForegroundDeletionBlocked is an event reason emitted when foreground deletion is waiting on owned resources.
+	ReasonPodCliqueForegroundDeletionBlocked = "PodCliqueForegroundDeletionBlocked"
 )
 
 // constants for PodCliqueScalingGroup lifecycle events

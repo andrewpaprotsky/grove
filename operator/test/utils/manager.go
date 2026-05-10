@@ -38,6 +38,11 @@ func (f *FakeManager) GetClient() client.Client {
 	return f.Client
 }
 
+// GetAPIReader returns the API reader registered with the fake manager.
+func (f *FakeManager) GetAPIReader() client.Reader {
+	return f.Client
+}
+
 // GetLogger returns the logger registered with the fake manager
 func (f *FakeManager) GetLogger() logr.Logger {
 	return f.Logger

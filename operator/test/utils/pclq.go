@@ -24,6 +24,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -73,6 +74,18 @@ func NewPCSGPodCliqueBuilder(name, namespace, pcsName, pcsgName string, pcsRepli
 		pcsReplicaIndex: int32(pcsReplicaIndex),
 		pclq:            pclq,
 	}
+}
+
+// NewPodCliqueDisruptionPolicy returns the supported disruption policy shape.
+func NewPodCliqueDisruptionPolicy() *grovecorev1alpha1.PodCliqueDisruptionPolicy {
+	return &grovecorev1alpha1.PodCliqueDisruptionPolicy{Rules: []grovecorev1alpha1.PodCliqueDisruptionRule{{
+		Action: grovecorev1alpha1.PodCliqueDisruptionActionRecreate,
+		OnPodConditions: []grovecorev1alpha1.PodConditionPattern{{
+			Type:   corev1.DisruptionTarget,
+			Status: corev1.ConditionTrue,
+			Reason: grovecorev1alpha1.PodDisruptionReasonDeletionByTaintManager,
+		}},
+	}}}
 }
 
 // WithLabels merges the passed labels with default labels.

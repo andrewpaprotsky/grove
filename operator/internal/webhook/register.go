@@ -32,10 +32,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
+var operatorNamespaceFile = constants.OperatorNamespaceFile
+
 // Register registers the webhooks with the controller manager.
 func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
 	if operatorCfg == nil {
 		return fmt.Errorf("operator configuration must not be nil")
+	}
+	reconcilerServiceAccountUserName, err := getReconcilerServiceAccountUsername()
+	if err != nil {
+		return err
 	}
 	defaultingWebhook := defaulting.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)
@@ -47,21 +53,17 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 	if err := pcsValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.Name, err)
 	}
+	pclqValidatingWebhook := pcsvalidation.NewPodCliqueHandler(mgr, operatorCfg.Authorizer, reconcilerServiceAccountUserName)
+	slog.Info("Registering webhook with manager", "handler", pcsvalidation.PodCliqueName)
+	if err := pclqValidatingWebhook.RegisterWithManager(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", pcsvalidation.PodCliqueName, err)
+	}
 	ctValidatingWebhook := ctvalidation.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", ctvalidation.Name)
 	if err := ctValidatingWebhook.RegisterWithManager(mgr); err != nil {
 		return fmt.Errorf("failed adding %s webhook handler: %v", ctvalidation.Name, err)
 	}
 	if operatorCfg.Authorizer.Enabled {
-		serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)
-		if !ok {
-			return fmt.Errorf("can not register authorizer webhook with no \"%s\" environment variable", constants.EnvVarServiceAccountName)
-		}
-		namespace, err := os.ReadFile(filepath.Clean(constants.OperatorNamespaceFile))
-		if err != nil {
-			return fmt.Errorf("error reading namespace file with error: %w", err)
-		}
-		reconcilerServiceAccountUserName := generateReconcilerServiceAccountUsername(string(namespace), serviceAccountName)
 		authorizerWebhook := authorization.NewHandler(mgr, operatorCfg.Authorizer, reconcilerServiceAccountUserName)
 		slog.Info("Registering webhook with manager", "handler", authorization.Name)
 		if err := authorizerWebhook.RegisterWithManager(mgr); err != nil {
@@ -69,6 +71,18 @@ func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfigura
 		}
 	}
 	return nil
+}
+
+func getReconcilerServiceAccountUsername() (string, error) {
+	serviceAccountName, ok := os.LookupEnv(constants.EnvVarServiceAccountName)
+	if !ok {
+		return "", fmt.Errorf("can not register webhooks with no \"%s\" environment variable", constants.EnvVarServiceAccountName)
+	}
+	namespace, err := os.ReadFile(filepath.Clean(operatorNamespaceFile))
+	if err != nil {
+		return "", fmt.Errorf("error reading namespace file with error: %w", err)
+	}
+	return generateReconcilerServiceAccountUsername(string(namespace), serviceAccountName), nil
 }
 
 func generateReconcilerServiceAccountUsername(namespace, serviceAccountName string) string {

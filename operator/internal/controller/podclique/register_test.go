@@ -148,3 +148,22 @@ func Test_isMarkedForDeletion(t *testing.T) {
 		})
 	}
 }
+
+func TestPodPredicate_UpdateForDisruptionTarget(t *testing.T) {
+	oldPod := testutils.NewPodBuilder("pclq-1-0", "default").
+		WithOwner("pclq-1").
+		WithLabels(map[string]string{common.LabelManagedByKey: common.LabelManagedByValue}).
+		Build()
+	newPod := oldPod.DeepCopy()
+	newPod.Status.Conditions = []corev1.PodCondition{{
+		Type:   corev1.DisruptionTarget,
+		Status: corev1.ConditionTrue,
+		Reason: grovecorev1alpha1.PodDisruptionReasonDeletionByTaintManager,
+	}}
+
+	funcs, ok := (&Reconciler{}).podPredicate().(predicate.Funcs)
+	require.True(t, ok)
+
+	assert.True(t, funcs.UpdateFunc(event.UpdateEvent{ObjectOld: oldPod, ObjectNew: newPod}))
+	assert.False(t, hasDisruptionTargetConditionChanged(newPod.Status.Conditions, newPod.Status.Conditions))
+}

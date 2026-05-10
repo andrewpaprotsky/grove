@@ -83,18 +83,17 @@ func podCliqueScalingGroupUpdatePredicate() predicate.Predicate {
 	}
 }
 
-// mapPCSToPCSG maps PodCliqueSet rolling update events to PodCliqueScalingGroup reconcile requests for the currently updating replica
+// mapPCSToPCSG maps PodCliqueSet updates to PodCliqueScalingGroup reconcile requests.
 func mapPCSToPCSG() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
 		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
 		if !ok {
 			return nil
 		}
-		if pcs.Status.UpdateProgress == nil {
-			return nil
-		}
 		var pcsReplicaIndices []int32
-		if componentutils.IsAutoUpdateStrategy(pcs) &&
+		if pcs.Status.ObservedGeneration == nil || *pcs.Status.ObservedGeneration != pcs.Generation || pcs.Status.UpdateProgress == nil {
+			pcsReplicaIndices = lo.RangeFrom(int32(0), int(pcs.Spec.Replicas))
+		} else if componentutils.IsAutoUpdateStrategy(pcs) &&
 			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
 			// Rolling recreate needs to have a CurrentlyUpdating which is used to generate an event for the corresponding PCSG
 			pcsReplicaIndices = lo.RangeFrom(pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex, 1)
@@ -144,6 +143,10 @@ func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 	newPCS, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
 	if !okOld || !okNew {
 		return false
+	}
+
+	if oldPCS.GetGeneration() != newPCS.GetGeneration() {
+		return true
 	}
 
 	if oldPCS.Status.UpdateProgress != nil && newPCS.Status.UpdateProgress != nil {

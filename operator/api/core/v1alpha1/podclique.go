@@ -78,6 +78,55 @@ type PodCliqueSpec struct {
 	// ScaleConfig is the horizontal pod autoscaler configuration for a PodClique.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"autoScalingConfig,omitempty"`
+	// Disruption configures opt-in PodClique replacement on matching Pod disruption signals.
+	// +optional
+	Disruption *PodCliqueDisruptionPolicy `json:"disruption,omitempty"`
+}
+
+// PodCliqueDisruptionPolicy defines PodClique replacement rules.
+type PodCliqueDisruptionPolicy struct {
+	// Rules contains the single supported replacement rule.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=1
+	// +listType=atomic
+	Rules []PodCliqueDisruptionRule `json:"rules"`
+}
+
+// PodCliqueDisruptionRule defines one Pod condition trigger and action.
+type PodCliqueDisruptionRule struct {
+	// Action is the replacement action to run when the rule matches.
+	// +kubebuilder:validation:Enum=Recreate
+	Action PodCliqueDisruptionAction `json:"action"`
+	// OnPodConditions matches Kubernetes Pod conditions.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=1
+	// +listType=atomic
+	OnPodConditions []PodConditionPattern `json:"onPodConditions"`
+}
+
+// PodCliqueDisruptionAction is a disruption replacement action.
+type PodCliqueDisruptionAction string
+
+const (
+	// PodCliqueDisruptionActionRecreate deletes the PodClique so its owner recreates it.
+	PodCliqueDisruptionActionRecreate PodCliqueDisruptionAction = "Recreate"
+	// PodDisruptionReasonDeletionByTaintManager is the taint-manager DisruptionTarget reason.
+	PodDisruptionReasonDeletionByTaintManager = "DeletionByTaintManager"
+)
+
+// PodConditionPattern matches a Kubernetes Pod condition.
+type PodConditionPattern struct {
+	// Type is the Pod condition type.
+	// +kubebuilder:validation:Enum=DisruptionTarget
+	Type corev1.PodConditionType `json:"type"`
+	// Status is the Pod condition status. Defaults to True.
+	// +kubebuilder:validation:Enum=True
+	// +kubebuilder:default=True
+	// +optional
+	Status corev1.ConditionStatus `json:"status,omitempty"`
+	// Reason is the Pod condition reason.
+	// +kubebuilder:validation:Enum=DeletionByTaintManager
+	Reason string `json:"reason"`
 }
 
 // AutoScalingConfig defines the configuration for the horizontal pod autoscaler.

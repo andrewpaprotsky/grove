@@ -178,6 +178,27 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func TestCreateOrUpdatePCLQsIgnoresStaleListedPodClique(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueParameters("howl", 1, nil).
+		Build()
+	stalePCLQName := fmt.Sprintf("%s-0-howl", testPCSName)
+	cl := testutils.CreateDefaultFakeClient(nil)
+	operator := &_resource{
+		client:        cl,
+		scheme:        groveclientscheme.Scheme,
+		eventRecorder: record.NewFakeRecorder(10),
+	}
+
+	err := operator.createOrUpdatePCLQs(context.Background(), logr.Discard(), pcs, []string{stalePCLQName})
+	require.NoError(t, err)
+
+	pclq := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: stalePCLQName, Namespace: testPCSNamespace}, pclq))
+}
+
 func getExistingPodCliques(t *testing.T, cl client.Client, pcsObjMeta metav1.ObjectMeta) []grovecorev1alpha1.PodClique {
 	podCliqueList := &grovecorev1alpha1.PodCliqueList{}
 	assert.NoError(t, cl.List(context.Background(), podCliqueList, client.InNamespace(pcsObjMeta.Namespace), client.MatchingLabels(getPodCliqueSelectorLabels(pcsObjMeta))))

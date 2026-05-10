@@ -18,6 +18,7 @@ package webhook
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -86,6 +87,9 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 	})
 	mgr.WebhookServer = server
 
+	t.Setenv(constants.EnvVarServiceAccountName, "test-sa")
+	setTestNamespaceFile(t, "test-namespace")
+
 	// Authorizer disabled
 	authorizerConfig := configv1alpha1.AuthorizerConfig{
 		Enabled: false,
@@ -101,9 +105,9 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestRegisterWebhooks_WithAuthorizerMissingEnvVar tests that registration fails
-// when authorizer is enabled but required environment variable is missing.
-func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
+// TestRegisterWebhooks_WithoutAuthorizerMissingEnvVar tests that registration fails
+// when the reconciler service account environment variable is missing.
+func TestRegisterWebhooks_WithoutAuthorizerMissingEnvVar(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	mgr := &testutils.FakeManager{
 		Client: cl,
@@ -121,9 +125,9 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 	err := os.Unsetenv(constants.EnvVarServiceAccountName)
 	require.NoError(t, err)
 
-	// Authorizer enabled
+	// Authorizer disabled, but PodClique validation still needs the reconciler identity.
 	authorizerConfig := configv1alpha1.AuthorizerConfig{
-		Enabled: true,
+		Enabled: false,
 	}
 
 	operatorCfg := configv1alpha1.OperatorConfiguration{
@@ -138,7 +142,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 }
 
 // TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile tests that registration fails
-// when authorizer is enabled but namespace file is missing.
+// when the reconciler service account namespace file is missing.
 func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	mgr := &testutils.FakeManager{
@@ -155,6 +159,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 
 	// Set env var
 	t.Setenv(constants.EnvVarServiceAccountName, "test-sa")
+	setMissingNamespaceFile(t)
 
 	// Authorizer enabled - will fail on reading non-existent namespace file
 	authorizerConfig := configv1alpha1.AuthorizerConfig{
@@ -173,7 +178,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 }
 
 // TestRegisterWebhooks_WithAuthorizerSuccess tests successful webhook registration
-// when authorizer is enabled and all requirements are met.
+// when authorizer is enabled and all reconciler identity requirements are met.
 func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	mgr := &testutils.FakeManager{
@@ -190,24 +195,8 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 
 	// Set env var
 	t.Setenv(constants.EnvVarServiceAccountName, "test-sa")
+	setTestNamespaceFile(t, "test-namespace")
 
-	// Create a temporary namespace file
-	tmpFile, err := os.CreateTemp("", "namespace")
-	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-
-	_, err = tmpFile.WriteString("test-namespace")
-	require.NoError(t, err)
-	tmpFile.Close()
-
-	// Temporarily override the namespace file path
-	originalNamespaceFile := constants.OperatorNamespaceFile
-	// Note: We cannot modify the constant directly, so this test will fail to read the file
-	// unless we refactor the code. For now, we'll skip this specific test case.
-	_ = originalNamespaceFile
-
-	// This test would require refactoring the code to make the namespace file path configurable
-	// For now, we'll just test that the error occurs as expected
 	authorizerConfig := configv1alpha1.AuthorizerConfig{
 		Enabled: true,
 	}
@@ -218,7 +207,27 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	err = Register(mgr, &operatorCfg)
-	// Will error because it tries to read the hardcoded namespace file path
-	require.Error(t, err)
+	err := Register(mgr, &operatorCfg)
+	require.NoError(t, err)
+}
+
+func setTestNamespaceFile(t *testing.T, namespace string) {
+	t.Helper()
+	namespaceFile := filepath.Join(t.TempDir(), "namespace")
+	require.NoError(t, os.WriteFile(namespaceFile, []byte(namespace), 0600))
+	setOperatorNamespaceFile(t, namespaceFile)
+}
+
+func setMissingNamespaceFile(t *testing.T) {
+	t.Helper()
+	setOperatorNamespaceFile(t, filepath.Join(t.TempDir(), "namespace"))
+}
+
+func setOperatorNamespaceFile(t *testing.T, namespaceFile string) {
+	t.Helper()
+	originalNamespaceFile := operatorNamespaceFile
+	operatorNamespaceFile = namespaceFile
+	t.Cleanup(func() {
+		operatorNamespaceFile = originalNamespaceFile
+	})
 }

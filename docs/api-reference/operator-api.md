@@ -286,6 +286,55 @@ PodClique is a set of pods running the same image.
 | `status` _[PodCliqueStatus](#podcliquestatus)_ | Status defines the status of a PodClique. |  |  |
 
 
+#### PodCliqueDisruptionAction
+
+_Underlying type:_ _string_
+
+PodCliqueDisruptionAction is a disruption replacement action.
+
+
+
+_Appears in:_
+- [PodCliqueDisruptionRule](#podcliquedisruptionrule)
+
+| Field | Description |
+| --- | --- |
+| `Recreate` | PodCliqueDisruptionActionRecreate deletes the PodClique so its owner recreates it.<br /> |
+
+
+#### PodCliqueDisruptionPolicy
+
+
+
+PodCliqueDisruptionPolicy defines PodClique replacement rules.
+
+
+
+_Appears in:_
+- [PodCliqueSpec](#podcliquespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `rules` _[PodCliqueDisruptionRule](#podcliquedisruptionrule) array_ | Rules contains the single supported replacement rule. |  | MaxItems: 1 <br />MinItems: 1 <br /> |
+
+
+#### PodCliqueDisruptionRule
+
+
+
+PodCliqueDisruptionRule defines one Pod condition trigger and action.
+
+
+
+_Appears in:_
+- [PodCliqueDisruptionPolicy](#podcliquedisruptionpolicy)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `action` _[PodCliqueDisruptionAction](#podcliquedisruptionaction)_ | Action is the replacement action to run when the rule matches. |  | Enum: [Recreate] <br /> |
+| `onPodConditions` _[PodConditionPattern](#podconditionpattern) array_ | OnPodConditions matches Kubernetes Pod conditions. |  | MaxItems: 1 <br />MinItems: 1 <br /> |
+
+
 #### PodCliqueRollingUpdateProgress
 
 
@@ -679,6 +728,7 @@ _Appears in:_
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />1. It defines the minimum number of pods that are guaranteed to be gang scheduled.<br />2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result<br />in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template<br />Replicas. |  |  |
 | `startsAfter` _string array_ | StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.<br />If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start<br />amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.<br />If there are more than one PodClique's defined and StartsAfter is not set for any of them, then their startup order<br />is random at best and must not be relied upon.<br />Validations:<br />1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.<br />2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error. |  |  |
 | `autoScalingConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for a PodClique. |  |  |
+| `disruption` _[PodCliqueDisruptionPolicy](#podcliquedisruptionpolicy)_ | Disruption configures opt-in PodClique replacement on matching Pod disruption signals. |  |  |
 
 
 #### PodCliqueStatus
@@ -748,6 +798,24 @@ _Appears in:_
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this<br />PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once<br />UpdateEndedAt is set, which marks the end of the update. |  |  |
 | `podTemplateHash` _string_ | PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.<br />This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for<br />preferential deletions in auto update strategies, and in all strategies for scale-ins.<br />PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
 | `readyPodsSelectedToUpdate` _[PodsSelectedToUpdate](#podsselectedtoupdate)_ | ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have<br />been previously updated. This field is only set for auto update strategies where Grove orchestrates Pod deletions.<br />For the OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions. |  |  |
+
+
+#### PodConditionPattern
+
+
+
+PodConditionPattern matches a Kubernetes Pod condition.
+
+
+
+_Appears in:_
+- [PodCliqueDisruptionRule](#podcliquedisruptionrule)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `type` _[PodConditionType](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#podconditiontype-v1-core)_ | Type is the Pod condition type. |  | Enum: [DisruptionTarget] <br /> |
+| `status` _[ConditionStatus](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#conditionstatus-v1-core)_ | Status is the Pod condition status. Defaults to True. | True | Enum: [True] <br /> |
+| `reason` _string_ | Reason is the Pod condition reason. |  | Enum: [DeletionByTaintManager] <br /> |
 
 
 #### PodGangPhase

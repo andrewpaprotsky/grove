@@ -117,6 +117,18 @@ func TestUpdateObservedGeneration(t *testing.T) {
 	}
 }
 
+func TestComputeGenerationHashIgnoresDisruptionPolicy(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+			Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "worker"}},
+		},
+	}}
+	pcsWithDisruption := pcs.DeepCopy()
+	pcsWithDisruption.Spec.Template.Cliques[0].Spec.Disruption = testutils.NewPodCliqueDisruptionPolicy()
+
+	assert.Equal(t, computeGenerationHash(pcs), computeGenerationHash(pcsWithDisruption))
+}
+
 // TestGetKindSyncGroups tests that every expected component kind appears in exactly one
 // sync group and that the number of groups is at least 1.
 func TestGetKindSyncGroups(t *testing.T) {

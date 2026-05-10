@@ -19,9 +19,12 @@ package utils
 import (
 	"context"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -202,6 +205,32 @@ func TestGetPCLQsByOwner(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestComputePCLQPodTemplateHashIgnoresDisruptionPolicy(t *testing.T) {
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{Name: "worker"}
+	templateWithDisruption := template.DeepCopy()
+	templateWithDisruption.Spec.Disruption = testutils.NewPodCliqueDisruptionPolicy()
+
+	assert.Equal(t, ComputePCLQPodTemplateHash(template, ""), ComputePCLQPodTemplateHash(templateWithDisruption, ""))
+}
+
+func TestGetMinAvailableBreachedPCLQInfoIgnoresTerminatingPodCliques(t *testing.T) {
+	now := time.Now()
+	deletionTime := metav1.NewTime(now)
+	pclqs := []grovecorev1alpha1.PodClique{{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker", DeletionTimestamp: &deletionTime},
+		Status: grovecorev1alpha1.PodCliqueStatus{Conditions: []metav1.Condition{{
+			Type:               apiconstants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(now.Add(-time.Minute)),
+		}}},
+	}}
+
+	names, waitFor := GetMinAvailableBreachedPCLQInfo(pclqs, time.Second, now)
+
+	assert.Empty(t, names)
+	assert.Zero(t, waitFor)
 }
 
 // TestGroupPCLQsByPodGangName tests the GroupPCLQsByPodGangName function

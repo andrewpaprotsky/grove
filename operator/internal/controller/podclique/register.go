@@ -149,6 +149,7 @@ func hasPodStatusChanged(updateEvent event.UpdateEvent) bool {
 		return false
 	}
 	return hasReadyConditionChanged(oldPod.Status.Conditions, newPod.Status.Conditions) ||
+		hasDisruptionTargetConditionChanged(oldPod.Status.Conditions, newPod.Status.Conditions) ||
 		hasLastTerminationStateChanged(oldPod.Status.InitContainerStatuses, newPod.Status.InitContainerStatuses) ||
 		hasLastTerminationStateChanged(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) ||
 		hasStartedAndReadyChangedForAnyContainer(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses)
@@ -156,16 +157,23 @@ func hasPodStatusChanged(updateEvent event.UpdateEvent) bool {
 
 // hasReadyConditionChanged checks if the Pod's Ready condition status has transitioned
 func hasReadyConditionChanged(oldPodConditions, newPodConditions []corev1.PodCondition) bool {
-	getReadyCondition := func(podConditions []corev1.PodCondition) (corev1.PodCondition, bool) {
-		return lo.Find(podConditions, func(condition corev1.PodCondition) bool {
-			return condition.Type == corev1.PodReady
-		})
-	}
-	oldPodReadyCondition, oldOk := getReadyCondition(oldPodConditions)
-	newPodReadyCondition, newOk := getReadyCondition(newPodConditions)
+	oldPodReadyCondition, oldOk := podCondition(oldPodConditions, corev1.PodReady)
+	newPodReadyCondition, newOk := podCondition(newPodConditions, corev1.PodReady)
 	oldPodReady := oldOk && oldPodReadyCondition.Status == corev1.ConditionTrue
 	newPodReady := newOk && newPodReadyCondition.Status == corev1.ConditionTrue
 	return oldPodReady != newPodReady
+}
+
+func hasDisruptionTargetConditionChanged(oldPodConditions, newPodConditions []corev1.PodCondition) bool {
+	oldCondition, oldOk := podCondition(oldPodConditions, corev1.DisruptionTarget)
+	newCondition, newOk := podCondition(newPodConditions, corev1.DisruptionTarget)
+	return oldOk != newOk || oldOk && (oldCondition.Status != newCondition.Status || oldCondition.Reason != newCondition.Reason)
+}
+
+func podCondition(podConditions []corev1.PodCondition, conditionType corev1.PodConditionType) (corev1.PodCondition, bool) {
+	return lo.Find(podConditions, func(condition corev1.PodCondition) bool {
+		return condition.Type == conditionType
+	})
 }
 
 // hasLastTerminationStateChanged detects changes in container termination states with non-zero exit codes

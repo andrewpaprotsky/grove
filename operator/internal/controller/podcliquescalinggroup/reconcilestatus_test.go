@@ -31,6 +31,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 func TestComputeReplicaStatus(t *testing.T) {
@@ -164,6 +166,24 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
 		},
+		{
+			name:         "ignores terminating breached PodClique",
+			replicas:     2,
+			minAvailable: ptr.To(int32(2)),
+			scheduled:    2,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": {func() grovecorev1alpha1.PodClique {
+					pclq := buildTerminatingClique("old")
+					pclq.Status.Conditions = []metav1.Condition{{
+						Type:   constants.ConditionTypeMinAvailableBreached,
+						Status: metav1.ConditionTrue,
+					}}
+					return pclq
+				}()},
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,6 +210,26 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			assert.Equal(t, tt.wantReason, condition.Reason)
 		})
 	}
+}
+
+func TestPodCliqueSetGenerationChangeEnqueuesAllPCSGReplicas(t *testing.T) {
+	oldPCS := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
+	newPCS := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "inference", Namespace: "default", Generation: 2},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Replicas: 2,
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{Name: "workers"}},
+			},
+		},
+		Status: grovecorev1alpha1.PodCliqueSetStatus{ObservedGeneration: ptr.To[int64](1)},
+	}
+
+	assert.True(t, shouldEnqueueOnPCSUpdate(event.UpdateEvent{ObjectOld: oldPCS, ObjectNew: newPCS}))
+	assert.ElementsMatch(t, []reconcile.Request{
+		{NamespacedName: client.ObjectKey{Namespace: "default", Name: "inference-0-workers"}},
+		{NamespacedName: client.ObjectKey{Namespace: "default", Name: "inference-1-workers"}},
+	}, mapPCSToPCSG()(context.Background(), newPCS))
 }
 
 func TestGetPodCliquesPerPCSGReplica(t *testing.T) {

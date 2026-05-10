@@ -27,6 +27,7 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -58,6 +59,33 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+}
+
+func TestSyncPCLQDisruptionPolicy(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	policy := testutils.NewPodCliqueDisruptionPolicy()
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+			Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Disruption: policy}}},
+		}},
+	}
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pcsg-0-worker",
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "test-pcsg",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+		},
+	}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pclq).Build()
+
+	require.NoError(t, (&_resource{client: cl}).syncPCLQDisruptionPolicy(context.Background(), logr.Discard(), pcs, pclq))
+
+	updated := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pclq), updated))
+	assert.Equal(t, policy, updated.Spec.Disruption)
 }
 
 // TestGetPCSGTemplateNumPods tests calculating the number of pods in a PCSG template

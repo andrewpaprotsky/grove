@@ -32,6 +32,7 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,6 +45,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pclq
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodClique]{
 		r.ensureFinalizer,
 		r.processUpdate,
+		r.processDisruptionPolicy,
 		r.syncPCLQResources,
 		r.updateObservedGeneration,
 	}
@@ -55,6 +57,47 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pclq
 	}
 	log.Info("Finished spec reconciliation flow", "PodClique", client.ObjectKeyFromObject(pclq))
 	return ctrlcommon.ContinueReconcile()
+}
+
+func (r *Reconciler) processDisruptionPolicy(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	if pclq.Spec.Disruption == nil || !ctrlutils.IsManagedPodClique(pclq, apiconstants.KindPodCliqueSet, apiconstants.KindPodCliqueScalingGroup) {
+		return ctrlcommon.ContinueReconcile()
+	}
+	pods, err := componentutils.GetPCLQPods(ctx, r.client, componentutils.GetPodCliqueSetName(pclq.ObjectMeta), pclq)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("failed to list pods for PodClique %v", client.ObjectKeyFromObject(pclq)), err)
+	}
+	for _, pod := range pods {
+		if !podMatchesDisruptionPolicy(pclq.Spec.Disruption, pod) {
+			continue
+		}
+		if err := r.client.Delete(ctx, pclq, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
+			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("failed to delete disrupted PodClique %v", client.ObjectKeyFromObject(pclq)), err)
+		}
+		if r.eventRecorder != nil {
+			r.eventRecorder.Eventf(pclq, corev1.EventTypeNormal, constants.ReasonPodCliqueDisruptionAccepted, "Accepted disruption-triggered foreground deletion for PodClique %s after matching Pod %s", pclq.Name, pod.Name)
+		}
+		logger.Info("Deleted PodClique after matching disruption policy", "PodClique", client.ObjectKeyFromObject(pclq), "Pod", client.ObjectKeyFromObject(pod))
+		return ctrlcommon.Requeue("requeue disrupted PodClique after foreground deletion request")
+	}
+	return ctrlcommon.ContinueReconcile()
+}
+
+func podMatchesDisruptionPolicy(policy *grovecorev1alpha1.PodCliqueDisruptionPolicy, pod *corev1.Pod) bool {
+	if pod.DeletionTimestamp == nil || len(policy.Rules) != 1 || policy.Rules[0].Action != grovecorev1alpha1.PodCliqueDisruptionActionRecreate || len(policy.Rules[0].OnPodConditions) != 1 {
+		return false
+	}
+	pattern := policy.Rules[0].OnPodConditions[0]
+	status := pattern.Status
+	if status == "" {
+		status = corev1.ConditionTrue
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == pattern.Type && condition.Status == status && condition.Reason == pattern.Reason {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureFinalizer adds the PodClique finalizer if it's not already present

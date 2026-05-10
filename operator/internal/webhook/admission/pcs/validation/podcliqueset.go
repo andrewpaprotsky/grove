@@ -545,6 +545,10 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("autoScalingConfig", "maxReplicas"), cliqueSpec.ScaleConfig.MaxReplicas, "must be greater than or equal to replicas"))
 		}
 	}
+	if cliqueSpec.Disruption != nil && cliqueSpec.ScaleConfig != nil {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("disruption"), "cannot be used with podClique autoScalingConfig"))
+	}
+	allErrs = append(allErrs, validatePodCliqueDisruptionPolicy(cliqueSpec.Disruption, fldPath.Child("disruption"))...)
 
 	warnings, cliquePodSpecErrs := v.validatePodSpec(cliqueSpec.PodSpec, fldPath.Child("podSpec"))
 	if len(cliquePodSpecErrs) != 0 {
@@ -552,6 +556,35 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 	}
 
 	return warnings, allErrs
+}
+
+func validatePodCliqueDisruptionPolicy(policy *grovecorev1alpha1.PodCliqueDisruptionPolicy, fldPath *field.Path) field.ErrorList {
+	if policy == nil {
+		return nil
+	}
+	if len(policy.Rules) != 1 {
+		return field.ErrorList{field.Invalid(fldPath.Child("rules"), len(policy.Rules), "must contain exactly one rule")}
+	}
+	rule := policy.Rules[0]
+	allErrs := field.ErrorList{}
+	if rule.Action != grovecorev1alpha1.PodCliqueDisruptionActionRecreate {
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("rules").Index(0).Child("action"), rule.Action, []string{string(grovecorev1alpha1.PodCliqueDisruptionActionRecreate)}))
+	}
+	if len(rule.OnPodConditions) != 1 {
+		return append(allErrs, field.Invalid(fldPath.Child("rules").Index(0).Child("onPodConditions"), len(rule.OnPodConditions), "must contain exactly one Pod condition matcher"))
+	}
+	condition := rule.OnPodConditions[0]
+	conditionPath := fldPath.Child("rules").Index(0).Child("onPodConditions").Index(0)
+	if condition.Type != corev1.DisruptionTarget {
+		allErrs = append(allErrs, field.NotSupported(conditionPath.Child("type"), condition.Type, []string{string(corev1.DisruptionTarget)}))
+	}
+	if condition.Status != "" && condition.Status != corev1.ConditionTrue {
+		allErrs = append(allErrs, field.NotSupported(conditionPath.Child("status"), condition.Status, []string{string(corev1.ConditionTrue)}))
+	}
+	if condition.Reason != grovecorev1alpha1.PodDisruptionReasonDeletionByTaintManager {
+		allErrs = append(allErrs, field.NotSupported(conditionPath.Child("reason"), condition.Reason, []string{grovecorev1alpha1.PodDisruptionReasonDeletionByTaintManager}))
+	}
+	return allErrs
 }
 
 // isStartupTypeExplicit returns true if the startup type is Explicit.
